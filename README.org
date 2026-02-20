@@ -1,1 +1,6 @@
 * WIP
+
+See also:
+
+- https://github.com/heartnheart/ewv
+- https://github.com/emacs-eaf/emacs-application-framework
