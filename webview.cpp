@@ -3,10 +3,62 @@
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::Callback;
 
-// 模仿 Rust 的 Webview 结构体
+namespace utils {
+
+    static std::wstring utf8_to_wstring(const std::string& utf8_str) {
+        if (utf8_str.empty()) {
+            return std::wstring();
+        }
+        // calculate the size of the wide string buffer needed
+        int size_needed = MultiByteToWideChar(
+            CP_UTF8, 0,
+            utf8_str.data(), (int)utf8_str.size(),
+            NULL, 0
+        );
+        // failure case, return empty string
+        if (size_needed <= 0) {
+            return std::wstring();
+        }
+        // allocate a buffer for the wide string
+        std::wstring wstr(size_needed, 0);
+        // perform the actual conversion
+        MultiByteToWideChar(
+            CP_UTF8, 0,
+            utf8_str.data(), (int)utf8_str.size(),
+            wstr.data(), size_needed
+        );
+        return wstr;
+    }
+
+    static std::string wstring_to_utf8(const std::wstring& wstr) {
+        if (wstr.empty()) {
+            return std::string();
+        }
+        int size_needed = WideCharToMultiByte(
+            CP_UTF8, 0,
+            wstr.data(), (int)wstr.size(),
+            NULL, 0, NULL, NULL
+        );
+        if (size_needed == 0) {
+            return std::string();
+        }
+        std::string str(size_needed, 0);
+        WideCharToMultiByte(
+            CP_UTF8, 0,
+            wstr.data(), (int)wstr.size(),
+            &str[0], size_needed, NULL, NULL
+        );
+        return str;
+    }
+}
+
+namespace u = utils;
+
+
 struct WebViewInstance {
-    int64_t id{ 0 }; // 与 Emacs 侧的 ewv-id 对应
-    // 核心组件，必须保留以进行后续操作
+    // Unique ID for this instance, used for mapping and communication with Emacs
+    int64_t id{ 0 };
+    // WebView COM interfaces
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> webview;
 
@@ -65,54 +117,6 @@ static void create_webview_instance(HWND parentHwnd, RECT initialBounds, std::ws
             }).Get());
 }
 
-// 将 UTF-8 std::string 转换为 UTF-16 std::wstring
-static std::wstring utf8_to_wstring(const std::string& utf8_str) {
-    if (utf8_str.empty()) {
-        return std::wstring();
-    }
-
-    // 1. 第一次调用：计算转换后需要的宽字符数量
-    int size_needed = MultiByteToWideChar(
-        CP_UTF8, 0,
-        utf8_str.data(), (int)utf8_str.size(),
-        NULL, 0
-    );
-
-    if (size_needed <= 0) {
-        return std::wstring(); // 转换失败处理
-    }
-
-    // 2. 分配足够大的 std::wstring
-    std::wstring wstr(size_needed, 0);
-
-    // 3. 第二次调用：执行真正的转换，写入到 wstr 中
-    MultiByteToWideChar(
-        CP_UTF8, 0,
-        utf8_str.data(), (int)utf8_str.size(),
-        wstr.data(), size_needed
-    );
-
-    return wstr;
-}
-
-static std::string wstring_to_utf8(const std::wstring& wstr) {
-    if (wstr.empty()) return std::string();
-
-    // 第一次调用获取需要的缓冲区大小
-    int size_needed = WideCharToMultiByte(
-        CP_UTF8, 0, 
-        wstr.data(), (int)wstr.size(), 
-        NULL, 0, NULL, NULL);
-
-    // 分配空间并进行真正的转换
-    std::string strTo(size_needed, 0);
-    WideCharToMultiByte(
-        CP_UTF8, 0, 
-        wstr.data(), (int)wstr.size(),
-        &strTo[0], size_needed, NULL, NULL);
-
-    return strTo;
-}
 
 
 static auto add(const jsonrpc::json& params) -> jsonrpc::json {
@@ -134,7 +138,7 @@ auto webview_init(jsonrpc::Conn& server) -> void {
         RECT bounds = { params[1][0].get<LONG>(), params[1][1].get<LONG>(), 
             params[1][2].get<LONG>(), params[1][3].get<LONG>() };
         std::string url = params[2].is_null() ? "" : params[2].get<std::string>();
-        std::wstring wurl = utf8_to_wstring(url);
+        std::wstring wurl = u::utf8_to_wstring(url);
         create_webview_instance(hwnd, bounds, wurl, [ctx](int64_t id) mutable {
             ctx.reply(id);
             });
@@ -177,7 +181,7 @@ auto webview_init(jsonrpc::Conn& server) -> void {
         if (it != g_webviews.end()) {
             wil::unique_cotaskmem_string title;
             it->second->webview->get_DocumentTitle(&title);
-            return wstring_to_utf8(title.get());
+            return u::wstring_to_utf8(title.get());
         }
         return nullptr;
         });

@@ -32,7 +32,6 @@
 (require 'jsonrpc)
 (require 'cl-lib)
 
-;;;; Basic Utilties
 (defconst t--dir
   (if (not load-in-progress) default-directory
     (file-name-directory load-file-name))
