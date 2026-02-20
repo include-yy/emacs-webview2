@@ -46,7 +46,7 @@ namespace jsonrpc {
             if (j.contains("data")) e.data = j.at("data");
         }
     };
-    // In JSON-RPC spec, id can be string, number, or null. 
+    // In JSON-RPC spec, id can be string, number, or null.
     // For simplicity, we use int here.
     struct Request {
         int id = 0;
@@ -84,13 +84,13 @@ namespace jsonrpc {
         }
     }
 
-    // Notification is not implemented in this simple version, 
+    // Notification is not implemented in this simple version,
     // but can be added similarly to Request without id.
 
     using IncomingMessage = std::variant<Request, Response>;
 
-    // JSON parser for incoming messages. 
-    // It can throw exceptions if the JSON is invalid 
+    // JSON parser for incoming messages.
+    // It can throw exceptions if the JSON is invalid
     // or doesn't conform to the expected structure.
     struct Parser {
         static IncomingMessage parse(const json& j) {
@@ -168,7 +168,7 @@ namespace jsonrpc {
     };
 
     // The main connection class that manages the JSON-RPC communication.
-    // This name comes from Emacs's jsonrpc.el, which uses jsonrpc-connection 
+    // This name comes from Emacs's jsonrpc.el, which uses jsonrpc-connection
     // as the basic class for handling JSON-RPC connections.
     class Conn {
     public:
@@ -177,7 +177,7 @@ namespace jsonrpc {
         using ResponseHandler = std::function<void(const Response&)>;
 
         Conn() : next_id_(1), running_(false), main_thread_id_(0) {
-            // Force Windows stdin/stdout into binary mode to prevent \r\n 
+            // Force Windows stdin/stdout into binary mode to prevent \r\n
             // translation that can cause Content-Length miscalculation or byte reading errors.
             (void)_setmode(_fileno(stdin), _O_BINARY);
             (void)_setmode(_fileno(stdout), _O_BINARY);
@@ -187,7 +187,7 @@ namespace jsonrpc {
 
         void start() {
             if (running_) return;
-            // Get main thread ID for PostThreadMessage. 
+            // Get main thread ID for PostThreadMessage.
             // We assume start() is called from the main thread.
             main_thread_id_ = GetCurrentThreadId();
             running_ = true;
@@ -220,7 +220,7 @@ namespace jsonrpc {
                 });
         }
 
-        // Send a request to the other side, with a callback for the response.        
+        // Send a request to the other side, with a callback for the response.
         void send_request(const std::string& method, const json& params, ResponseHandler callback) {
             int id = next_id_++;
             {
@@ -246,12 +246,12 @@ namespace jsonrpc {
         }
         // Low-level send (Used by Context)
         void send_response_success(int id, json result) {
-            json j; 
+            json j;
             to_json(j, Response::make_success(id, std::move(result)));
             send_message(j.dump());
         }
         void send_response_error(int id, int code, std::string msg, json data) {
-            json j; 
+            json j;
             to_json(j, Response::make_error(id, code, std::move(msg), std::move(data)));
             send_message(j.dump());
         }
@@ -269,7 +269,7 @@ namespace jsonrpc {
         std::map<int, ResponseHandler> pending_callbacks_;
 
         void send_message(const std::string& body) {
-            // std::osyncstream will atomically write the buffer to the stream 
+            // std::osyncstream will atomically write the buffer to the stream
             // when it is destructed, so we don't need to manually lock.
 
             // Emacs's jsonrpc use a HTTP-like framing with Content-Length header,
@@ -288,8 +288,8 @@ namespace jsonrpc {
                 return line;
                 };
 
-            // If we can ensure that input always is valid JSON and well-formed, 
-            // we can simplify the reading logic by just reading the Content-Length header 
+            // If we can ensure that input always is valid JSON and well-formed,
+            // we can simplify the reading logic by just reading the Content-Length header
             // and then reading the exact number of bytes for the body.
             // Thus, -32700 and -32600 error handling is not needed.
             while (running_) {
@@ -314,7 +314,7 @@ namespace jsonrpc {
                 std::vector<char> buffer(content_length);
                 std::cin.read(buffer.data(), content_length);
 
-                // Make sure we read the exact number of bytes specified by Content-Length. 
+                // Make sure we read the exact number of bytes specified by Content-Length.
                 // If not, it means the stream is broken or we reached EOF, so we should exit the loop.
                 if (std::cin.gcount() != content_length) break;
 
@@ -351,7 +351,7 @@ namespace jsonrpc {
                     handler(Context(*this, req.id), req.params);
                 }
                 catch (const std::exception& e) {
-                    // TODO: Consider -32602 Invalid params error if the handler 
+                    // TODO: Consider -32602 Invalid params error if the handler
                     // throws an exception related to parameter parsing or validation.
                     send_response_error(req.id, -32603, e.what(), nullptr);
                 }
@@ -376,9 +376,9 @@ namespace jsonrpc {
     };
     // Implement Context methods inline after Conn is defined.
     inline void Context::reply(json result) {
-        conn_.send_response_success(id_, std::move(result)); 
+        conn_.send_response_success(id_, std::move(result));
     }
     inline void Context::error(int code, std::string message, json data) {
-        conn_.send_response_error(id_, code, std::move(message), std::move(data)); 
+        conn_.send_response_error(id_, code, std::move(message), std::move(data));
     }
 }
