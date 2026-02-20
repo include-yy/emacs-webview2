@@ -139,11 +139,9 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="DebugConsole.h" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="jsonrpc.hpp" />
     <ClInclude Include="pch.h" />
-    <ClInclude Include="webview.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />

@@ -1,17 +1,16 @@
 #include "pch.h"
-#include "webview.h"
 
 using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::Callback;
 
 // 模仿 Rust 的 Webview 结构体
 struct WebViewInstance {
-    int64_t id; // 与 Emacs 侧的 ewv-id 对应
+    int64_t id{ 0 }; // 与 Emacs 侧的 ewv-id 对应
     // 核心组件，必须保留以进行后续操作
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> webview;
 
-    void resize(RECT newBounds) {
+    void resize(RECT newBounds) const {
         if (controller) {
             controller->put_Bounds(newBounds);
         }
@@ -53,10 +52,10 @@ static void create_webview_instance(HWND parentHwnd, RECT initialBounds, std::ws
                             // 存入全局管理器
                             g_webviews[newId] = instance;
                             std::wstring url2 = url;
-							if (url2.empty()) {
+                            if (url2.empty()) {
                                 url2 = std::wstring(L"https://www.example.com");
                             }
-							instance->webview->Navigate(url2.c_str());
+                            instance->webview->Navigate(url2.c_str());
                             // 触发回调，通知 Emacs 实例已准备就绪
                             if (on_created) on_created(newId);
 
@@ -123,7 +122,7 @@ static auto add(const jsonrpc::json& params) -> jsonrpc::json {
 auto webview_init(jsonrpc::Conn& server) -> void {
     // Initialize COM for the main thread
     (void)CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-	// Exit method to stop the server and exit the message loop
+    // Exit method to stop the server and exit the message loop
     server.register_method("exit", [&server](const jsonrpc::json& params) -> jsonrpc::json {
         PostThreadMessage(GetCurrentThreadId(), WM_QUIT, 0, 0);
         //server.stop();
@@ -132,24 +131,24 @@ auto webview_init(jsonrpc::Conn& server) -> void {
     server.register_async_method("new", [](jsonrpc::Context ctx, const jsonrpc::json& params) {
         // 假设参数 0 是 HWND，参数 1 是 Bounds 数组
         HWND hwnd = (HWND)params[0].get<int64_t>();
-		RECT bounds = { params[1][0].get<LONG>(), params[1][1].get<LONG>(), 
+        RECT bounds = { params[1][0].get<LONG>(), params[1][1].get<LONG>(), 
             params[1][2].get<LONG>(), params[1][3].get<LONG>() };
-		std::string url = params[2].is_null() ? "" : params[2].get<std::string>();
-		std::wstring wurl = utf8_to_wstring(url);
+        std::string url = params[2].is_null() ? "" : params[2].get<std::string>();
+        std::wstring wurl = utf8_to_wstring(url);
         create_webview_instance(hwnd, bounds, wurl, [ctx](int64_t id) mutable {
             ctx.reply(id);
             });
         return;
-		});
+        });
     server.register_method("set-focus", [](const jsonrpc::json& params) -> jsonrpc::json {
-		HWND hwnd = (HWND)params[0].get<size_t>();
+        HWND hwnd = (HWND)params[0].get<size_t>();
         //keybd_event(VK_MENU, 0, 0, 0);
         //auto res = SetForegroundWindow(hwnd);
         //keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
         SetFocus(hwnd);
         // return res ? true : false;
         return nullptr;
-		});
+        });
     server.register_method("close", [](const jsonrpc::json& params) -> jsonrpc::json {
         int64_t id = params[0].get<int64_t>();
         auto it = g_webviews.find(id);
@@ -171,7 +170,7 @@ auto webview_init(jsonrpc::Conn& server) -> void {
             return true;
         }
         return false;
-		});
+        });
     server.register_method("get-title", [](const jsonrpc::json& params) -> jsonrpc::json {
         int64_t id = params[0].get<int64_t>();
         auto it = g_webviews.find(id);
@@ -191,7 +190,7 @@ auto webview_init(jsonrpc::Conn& server) -> void {
             return true;
         }
         return false;
-		});
+        });
     server.register_method("reparent", [](const jsonrpc::json& params) -> jsonrpc::json {
         int64_t id = params[0].get<int64_t>();
         HWND newParent = (HWND)params[1].get<int64_t>();
@@ -202,8 +201,8 @@ auto webview_init(jsonrpc::Conn& server) -> void {
         }
         return false;
         });
-	// Example method to add two numbers
+    // Example method to add two numbers
     server.register_method("add", add);
-	
+    
     return;
 }
