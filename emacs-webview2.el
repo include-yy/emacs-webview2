@@ -32,6 +32,16 @@
 (require 'jsonrpc)
 (require 'cl-lib)
 
+(cl-defstruct t--webview
+  "WebView2 instance wrapper."
+  (id -1 :documentation "WebView2 object's id.")
+  (frame nil :documentation "Frame object belongs to.")
+  (url nil :documentation "Link navigate to.")
+  (buffer nil :documentation "buffer the object belongs to."))
+
+(defvar-local t--webview nil
+  "Buffer-local Webview2 structure.")
+
 (defconst t--dir
   (if (not load-in-progress) default-directory
     (file-name-directory load-file-name))
@@ -43,60 +53,45 @@
 (defvar t--buffer-registry nil
   "Managed buffers.")
 
+(defvar t--shutting-down nil)
+
+(defun t--alive-p ()
+  "Check if the connection is alive"
+  (and (jsonrpc-process-connection-p t--conn)
+       (not t--shutting-down)
+       (jsonrpc-running-p t--conn)))
+
 (defun t--srpc (method params)
   (jsonrpc-request t--conn method params))
 
-(defun t--start-webview2-manager ()
-  "Start the Manager Subprocess and create the RPC connection."
-  (when-let* ((_ (not (t-live-p)))
-              (path (file-name-concat t--dir "x64" "Debug" "wv2.exe"))
-              (proc (make-process :name "WebView2-Manager"
-                                  :command `(,path)
-                                  :coding 'binary)))
-    (setq t--conn (make-instance 'jsonrpc-process-connection
-                                 :name "Emacs-WebView2"
-                                 :process proc))
-    ;;(setf (jsonrpc--on-shutdown t--conn) (lambda (_obj) (t--cleanup)))
-    (add-hook 'delete-frame-functions
-              #'t--rescue-webview-on-frame-delete)
-    (add-hook 'window-configuration-change-hook
-              't--monitor-window-configuration-change)
-    (add-hook 'after-delete-frame-functions
-          't--after-frame-delete)))
+(defun t--say (method params)
+  (jsonrpc-notify t--conn method params))
 
-(defun t-live-p ()
-  (and (jsonrpc-process-connection-p t--conn)
-       (jsonrpc-running-p t--conn)))
+(defun t--get-frame-hwnd (&optional frame)
+  "Get frame's Win32 HWND."
+  (let ((id (frame-parameter (or frame (selected-frame)) 'window-id)))
+    (string-to-number id)))
 
-(defun t--cleanup ()
-  (dolist (buf (copy-sequence t--buffer-registry))
-    (when (buffer-live-p buf)
-      (kill-buffer buf)))
-  (setq t--buffer-registry nil)
-  (remove-hook 'window-configuration-change-hook
-               't--monitor-window-configuration-change)
-  (when (t-live-p) (t--srpc 'exit [nil]))
-  (setq t--conn nil))
-
-;;;; Webview buffer lifecycle management
+(defun t--get-window-rect (&optional window)
+  "Get WINDOW bound rect."
+  (cl-coerce (window-body-pixel-edges window) 'vector))
 
-(cl-defstruct t--webview
-  "WebView2 instance wrapper."
-  (id -1 :documentation "WebView2 object's id.")
-  (frame nil :documentation "Frame object belongs to.")
-  (url nil :documentation "Link navigate to.")
-  (buffer nil :documentation "buffer the object belongs to."))
+(defun m-exit ()
+  (setq t--shutting-down t)
+  (t--srpc 'exit [nil]))
 
-(defvar-local t--webview nil
-  "Buffer-local Webview2 structure.")
+(defun m-new (rect &optional url)
+  (let ((hwnd (t--get-frame-hwnd)))
+    (t--srpc 'new `[,hwnd ,rect ,url])))
 
-(defun m-call (fn &rest args)
-  (cond
-   ((not (jsonrpc-running-p t--conn))
-    (error "WebView2 is down"))
-   ((not (t--webview-p t--webview))
-    (error "Not in WebView2 buffer"))
-   (t (apply fn t--webview args))))
+(defun m-close (id)
+  (t--srpc 'close `[,id]))
+
+(defun m-resize (id rect)
+  (t--srpc 'resize `[,id ,rect]))
+
+(defun m-reparent (id hwnd)
+  (t--srpc 'reparent `[,id ,hwnd]))
 
 (defun m-visible-p (id)
   (t--srpc 'visible-p `[,id]))
@@ -111,70 +106,19 @@
 (defun m-get-title (id)
   (t--srpc 'get-title `[,id]))
 
-(defun m-resize (id rect)
-  (t--srpc 'resize `[,id ,rect]))
-
-(defun m-reparent (id hwnd)
-  (t--srpc 'reparent `[,id ,hwnd]))
-
-(defun m-close (id)
-  (t--srpc 'close `[,id]))
-
-(defun t--get-frame-hwnd (&optional frame)
-  "Get frame's Win32 HWND."
-  (let ((id (frame-parameter (or frame (selected-frame)) 'window-id)))
-    (string-to-number id)))
-
-(defun t--get-window-rect (&optional window)
-  (cl-coerce (window-body-pixel-edges window) 'vector))
-
-(defun t--new-webview (rect &optional url)
-  (let ((hwnd (t--get-frame-hwnd)))
-    (t--srpc 'new `[,hwnd ,rect ,url])))
-
 (defun t-set-focus-on-click ()
   (when (eq this-command 'mouse-drag-region)
-    (when (t-live-p)
-      (emacs-webview2--wv-set-focus))))
+    (when (t--alive-p)
+      (m-set-focus))))
 
-(add-hook 'pre-command-hook 't-set-focus-on-click)
-;;(remove-hook 'pre-command-hook 't-set-focus-on-click)
-
-(defun t--setup-buffer (obj)
-  (setq t--webview obj)
-  (add-to-list 't--buffer-registry (current-buffer))
-  (add-hook 'kill-buffer-hook 't--on-kill-buffer))
-
-(defun t--on-kill-buffer ()
-  (when (and (t-live-p) (t--webview-p t--webview))
-    (let ((id (t--webview-id t--webview)))
-      (m-close id)))
-  (setq t--buffer-registry
-        (delq (current-buffer) t--buffer-registry)))
-                                 
-(defun t-open-url (url)
-  (interactive "sUrl: ")
-  (t--start-webview2-manager)
-  (when (string-empty-p url)
-    (setq url "https://google.com"))
-  (let ((buffer (generate-new-buffer "EWV2")))
-    (switch-to-buffer buffer)
-    (let* ((rect (t--get-window-rect))
-           (id (t--new-webview rect url))
-           (wobj (make-emacs-webview2--webview
-                  :id id :frame (selected-frame)
-                  :url url :buffer buffer)))
-      (with-current-buffer buffer
-        (t--setup-buffer wobj)))))
-
-(defun t--monitor-window-configuration-change ()
-  (when (t-live-p)
+(defun t-monitor-window-configuration-change ()
+  (when (t--alive-p)
     (let ((processed-ids))
       (dolist (wnd (window-list))
         (with-selected-window wnd
           (when-let* ((w t--webview)
                       (id (t--webview-id w)))
-            (if (memq id processed-ids) nil
+            (unless (memq id processed-ids)
               (push id processed-ids)
               (let* ((bounds (t--get-window-rect))
                      (frame (t--webview-frame w))
@@ -188,27 +132,98 @@
       (dolist (buf t--buffer-registry)
         (when (buffer-live-p buf)
           (with-current-buffer buf
-            (when (and t--webview
-                       (not (get-buffer-window buf t)))
-              (m-set-visible (t--webview-id t--webview) nil))))))))
+            (when-let* ((_ (not (get-buffer-window buf t)))
+                        (w t--webview)
+                        (id (t--webview-id w)))
+              (m-set-visible id nil))))))))
 
-(defun t--after-frame-delete (_frame)
+(defun t-after-frame-delete (_frame)
   (t--monitor-window-configuration-change))
 
-(defun t--rescue-webview-on-frame-delete (frame)
-  (when (t-live-p)
+(defun t-rescue-webview-on-frame-delete (frame)
+  (when (t--alive-p)
     (dolist (wnd (window-list frame))
       (with-current-buffer (window-buffer wnd)
-        (when (and t--webview (eq (t--webview-frame t--webview) frame))
-          (let ((safe-frame (car (remove frame (frame-list)))))
-            (if safe-frame
-                (let ((hwnd (t--get-frame-hwnd safe-frame))
-                      (id (t--webview-id t--webview)))
-                  (m-reparent id hwnd)
-                  (m-set-visible id nil)
-                  (setf (t--webview-frame t--webview) safe-frame))
-              ;; Maybe Emacs exit.
-              (t--cleanup))))))))
+        (when-let* ((w t--webview)
+                    (_ (eq (t--webview-frame w) frame))
+                    (safe-frame (car (remove frame (frame-list))))
+                    (hwnd (t--get-frame-hwnd safe-frame))
+                    (id (t--webview-id w)))
+          (m-reparent id hwnd)
+          (m-set-visible id nil)
+          (setf (t--webview-frame w) safe-frame))))))
+
+(defun t--register-hooks ()
+  (add-hook 'pre-command-hook #'t-set-focus-on-click)
+  (add-hook 'delete-frame-functions
+            #'t-rescue-webview-on-frame-delete)
+  (add-hook 'window-configuration-change-hook
+            #'t-monitor-window-configuration-change)
+  (add-hook 'after-delete-frame-functions
+            #'t-after-frame-delete))
+
+(defun t--unregister-hooks ()
+  (remove-hook 'pre-command-hook #'t-set-focus-on-click)
+  (remove-hook 'delete-frame-functions
+               #'t-rescue-webview-on-frame-delete)
+  (remove-hook 'window-configuration-change-hook
+               #'t-monitor-window-configuration-change)
+  (remove-hook 'after-delete-frame-functions
+               #'t-after-frame-delete))
+
+(defun t--cleanup-sentinel (_conn)
+  (setq t--shutting-down t)
+  (dolist (buf (copy-sequence t--buffer-registry))
+    (when (buffer-live-p buf)
+      (kill-buffer buf)))
+  (t--unregister-hooks)
+  (setq t--buffer-registry nil)
+  (setq t--conn nil))
+
+(defun t--start-webview2-manager ()
+  "Start the Manager Subprocess and create the RPC connection."
+  (when-let* ((_ (not (t--alive-p)))
+              (path (file-name-concat t--dir "x64" "Debug" "wv2.exe"))
+              (proc (make-process :name "WebView2-Manager"
+                                  :command `(,path)
+                                  :coding 'binary)))
+    (setq t--conn (make-instance 'jsonrpc-process-connection
+                                 :name "Emacs-WebView2"
+                                 :process proc
+                                 :on-shutdown #'t--cleanup-sentinel))
+    (setq t--shutting-down nil)
+    (t--register-hooks)))
+
+(defun t--on-kill-buffer ()
+  (when (and (t--alive-p) (t--webview-p t--webview))
+    (let ((id (t--webview-id t--webview)))
+      (m-close id)))
+  (setq t--buffer-registry
+        (delq (current-buffer) t--buffer-registry)))
+
+(defun t--setup-buffer (obj)
+  (setq t--webview obj)
+  (add-to-list 't--buffer-registry (current-buffer))
+  (add-hook 'kill-buffer-hook 't--on-kill-buffer nil t))
+
+(defun t-open-url (url)
+  (interactive "sUrl: ")
+  (t--start-webview2-manager)
+  (when (string-empty-p url)
+    (setq url "https://google.com"))
+  (let ((buffer (generate-new-buffer "EWV2")))
+    (switch-to-buffer buffer)
+    (let* ((rect (t--get-window-rect))
+           (id (m-new rect url))
+           (wobj (make-emacs-webview2--webview
+                  :id id :frame (selected-frame)
+                  :url url :buffer buffer)))
+      (with-current-buffer buffer
+        (t--setup-buffer wobj)))))
+
+(defun t-shutdown ()
+  (interactive)
+  (when (t--alive-p) (m-exit)))
 
 ;; Local Variables:
 ;; read-symbol-shorthands: (("t-" . "emacs-webview2-")
