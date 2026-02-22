@@ -29,6 +29,10 @@
 ;;; Commentary:
 
 ;;; Code:
+(unless (and (eq system-type 'windows-nt)
+             (>= (car (w32-version)) 10))
+  (error "Please use this package on Windows 10 or above"))
+
 (require 'jsonrpc)
 (require 'cl-lib)
 
