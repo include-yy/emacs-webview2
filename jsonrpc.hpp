@@ -18,6 +18,10 @@
 
 #include "json.hpp"
 
+#ifndef WM_JSONRPC_MESSAGE
+#define WM_JSONRPC_MESSAGE (WM_USER + 114514)
+#endif
+
 // A simple JSON-RPC 2.0 implementation for C++ on Windows, using nlohmann::json
 // for JSON handling. See https://www.jsonrpc.org/specification for details on
 // the protocol. See https://github.com/nlohmann/json for the JSON library.
@@ -129,8 +133,6 @@ struct Parser {
   }
 };
 }  // namespace jsonrpc
-
-#define WM_JSONRPC_MESSAGE (WM_USER + 114514)
 
 // Code for stdio-based JSON-RPC connection handling on Windows.
 // Specifically for Win32 Message Loop integration. It reads from stdin,
