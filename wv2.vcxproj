@@ -142,6 +142,7 @@
     <ClInclude Include="json.hpp" />
     <ClInclude Include="jsonrpc.hpp" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="wv2_mgmt.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
