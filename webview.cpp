@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "wv2_mgmt.h"
 
+#include <WebView2EnvironmentOptions.h>
+
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
@@ -140,13 +142,7 @@ auto webview_init() -> void {
         });
     server.register_method("close", [](PA params) -> RT {
         int64_t id = params[0].get<int64_t>();
-        auto it = g_app->webviews.find(id);
-        if (it != g_app->webviews.end()) {
-            it->second->controller->Close();
-            g_app->webviews.erase(it);
-            return true;
-        }
-        return false;
+        return g_app->webviews.erase(id) > 0;
         });
     server.register_method("resize", with_webview([](WI it, PA params) -> RT {
         RECT newBounds = {

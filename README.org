@@ -5,6 +5,11 @@ See also:
 - https://github.com/heartnheart/ewv
 - https://github.com/emacs-eaf/emacs-application-framework
 
+** todos
+
+- Environment management
+- Key-bind management
+
 ** Non-goals
 
 - Add CDP support like playwright

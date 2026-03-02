@@ -66,6 +66,13 @@
        (jsonrpc-running-p t--conn)))
 
 (defun t--srpc (method params)
+  "Send a synchronous JSON-RPC request METHOD with PARAMS.
+
+This function wraps `jsonrpc-request' to communicate with the JSON-RPC
+server via the connection object held in `emacs-webview--conn'.
+
+Return the result of the remote method call, or signal an error if the
+request fails or times out."
   (jsonrpc-request t--conn method params))
 
 (defun t--say (method params)

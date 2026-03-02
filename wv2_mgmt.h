@@ -31,6 +31,8 @@ struct AppContext {
   // All WebView2 instances
   std::map<int64_t, std::shared_ptr<WebViewInstance>> webviews;
 
+  AppContext(jsonrpc::Conn::Waker waker) : server(std::move(waker)) {}
+
   ~AppContext() { webviews.clear(); }
 };
 
