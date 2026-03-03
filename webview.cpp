@@ -8,6 +8,12 @@ using Microsoft::WRL::ComPtr;
 
 namespace utils {
 static auto add(const jsonrpc::json& params) -> jsonrpc::json {
+    if (!params.is_array() || params.size() != 2) {
+        throw jsonrpc::JsonRpcException(jsonrpc::spec::kInvalidParams, "Argument must be array of length 2");
+    }
+    if (!params[0].is_number() || !params[1].is_number()) {
+        throw jsonrpc::JsonRpcException(jsonrpc::spec::kInvalidParams, "Argument is not number");
+    }
     return params[0].get<double>() + params[1].get<double>();
 }
 
