@@ -28,6 +28,8 @@ struct WebViewInstance {
 struct AppContext {
   // JSONRPC server
   jsonrpc::Conn server;
+  // WebView2 environments
+  std::map<std::string, Microsoft::WRL::ComPtr<ICoreWebView2Environment>> envs;
   // All WebView2 instances
   std::map<int64_t, std::shared_ptr<WebViewInstance>> webviews;
 

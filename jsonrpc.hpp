@@ -578,7 +578,7 @@ private:
         } else {
             // Method not found.
             if (req.id.has_value()) {
-                send_response_error(req.id.value(), spec::kMethodNotFound, spec::msg_MethodNotFound);
+                send_response_error(req.id.value(), spec::kMethodNotFound, spec::msg_MethodNotFound, req.method);
             }
         }
     }

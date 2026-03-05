@@ -36,6 +36,24 @@
 (require 'jsonrpc)
 (require 'cl-lib)
 
+(defgroup emacs-webview2 nil
+  "Options for emacs webview2 binding."
+  :tag "Emacs Webview2"
+  :group 'applications)
+
+(defcustom t-env-alist
+  '(("default" . (:language "zh-CN"
+                  :additional_browser_arguments nil
+                  :user_data_dir nil)))
+  "Docstring"
+  :type '(alist :key-type string :value-type plist)
+  :group 'emacs-webview2)
+
+(defcustom t-default-env "default"
+  "The deafult webview2 environment."
+  :type 'string
+  :group 'wv2)
+
 (cl-defstruct t--webview
   "WebView2 instance wrapper."
   (id -1 :documentation "WebView2 object's id.")
@@ -58,6 +76,18 @@
   "Managed buffers.")
 
 (defvar t--shutting-down nil)
+
+(defvar t--initialized-envs (make-hash-table :test 'equal)
+  "Initialized env hashtable")
+
+(defun t--ensure-env (env-name)
+  (unless (gethash env-name t--initialized-envs)
+    (let ((config (cdr (assoc env-name t-env-alist))))
+      (unless config
+        (user-error "%s not exist, try to add it" env-name))
+      (let ((rpc-params (append (list :name env-name) config)))
+        (m-env/create rpc-params)))
+    (puthash env-name t t--initialized-envs)))
 
 (defun t--alive-p ()
   "Check if the connection is alive"
@@ -87,40 +117,46 @@ request fails or times out."
   "Get WINDOW bound rect."
   (cl-coerce (window-body-pixel-edges window) 'vector))
 
-(defun m-exit ()
+(defun m-app/exit ()
   (setq t--shutting-down t)
-  (t--srpc 'exit [nil]))
+  (t--say 'app/exit :jsonrpc-omit))
 
-(defun m-new (rect &optional url)
+(defun m-env/create (config)
+  (t--srpc 'env/create config))
+
+(defun m-env/list-names ()
+  (t--srpc 'env/list-names :jsonrpc-omit))
+
+(defun m-wv/create (rect &optional url)
   (let ((hwnd (t--get-frame-hwnd)))
-    (t--srpc 'new `[,hwnd ,rect ,url])))
+    (t--srpc 'wv/create `[,hwnd ,rect ,url])))
 
-(defun m-close (id)
-  (t--srpc 'close `[,id]))
+(defun m-wv/close (id)
+  (t--srpc 'wv/close `[,id]))
 
-(defun m-resize (id rect)
-  (t--srpc 'resize `[,id ,rect]))
+(defun m-wv/resize (id rect)
+  (t--say 'wv/resize `[,id ,rect]))
 
-(defun m-reparent (id hwnd)
-  (t--srpc 'reparent `[,id ,hwnd]))
+(defun m-wv/reparent (id hwnd)
+  (t--say 'wv/reparent `[,id ,hwnd]))
 
-(defun m-visible-p (id)
-  (t--srpc 'visible-p `[,id]))
+(defun m-wv/visible-p (id)
+  (t--srpc 'wv/visible-p `[,id]))
 
-(defun m-set-visible (id b)
+(defun m-wv/set-visible (id b)
   (let ((bool (if b t :json-false)))
-    (t--srpc 'set-visible `[,id ,bool])))
+    (t--say 'wv/set-visible `[,id ,bool])))
 
-(defun m-set-focus ()
-  (t--srpc 'set-focus `[,(t--get-frame-hwnd)]))
+(defun m-app/set-focus ()
+  (t--say 'app/set-focus `[,(t--get-frame-hwnd)]))
 
-(defun m-get-title (id)
-  (t--srpc 'get-title `[,id]))
+(defun m-wv/get-title (id)
+  (t--srpc 'wv/get-title `[,id]))
 
 (defun t-set-focus-on-click ()
   (when (eq this-command 'mouse-drag-region)
     (when (t--alive-p)
-      (m-set-focus))))
+      (m-app/set-focus))))
 
 (defun t-monitor-window-configuration-change ()
   (when (t--alive-p)
@@ -136,17 +172,17 @@ request fails or times out."
                      (hwnd (t--get-frame-hwnd frame))
                      (curr-hwnd (t--get-frame-hwnd)))
                 (unless (eq hwnd curr-hwnd)
-                  (m-reparent id curr-hwnd)
+                  (m-wv/reparent id curr-hwnd)
                   (setf (t--webview-frame w) (window-frame wnd)))
-                (m-resize id bounds)
-                (m-set-visible id t))))))
+                (m-wv/resize id bounds)
+                (m-wv/set-visible id t))))))
       (dolist (buf t--buffer-registry)
         (when (buffer-live-p buf)
           (with-current-buffer buf
             (when-let* ((_ (not (get-buffer-window buf t)))
                         (w t--webview)
                         (id (t--webview-id w)))
-              (m-set-visible id nil))))))))
+              (m-wv/set-visible id nil))))))))
 
 (defun t-after-frame-delete (_frame)
   (t--monitor-window-configuration-change))
@@ -160,8 +196,8 @@ request fails or times out."
                     (safe-frame (car (remove frame (frame-list))))
                     (hwnd (t--get-frame-hwnd safe-frame))
                     (id (t--webview-id w)))
-          (m-reparent id hwnd)
-          (m-set-visible id nil)
+          (m-wv/reparent id hwnd)
+          (m-wv/set-visible id nil)
           (setf (t--webview-frame w) safe-frame))))))
 
 (defun t--register-hooks ()
@@ -189,7 +225,8 @@ request fails or times out."
       (kill-buffer buf)))
   (t--unregister-hooks)
   (setq t--buffer-registry nil)
-  (setq t--conn nil))
+  (setq t--conn nil)
+  (clrhash t--initialized-envs))
 
 (defun t--start-webview2-manager ()
   "Start the Manager Subprocess and create the RPC connection."
@@ -208,7 +245,7 @@ request fails or times out."
 (defun t--on-kill-buffer ()
   (when (and (t--alive-p) (t--webview-p t--webview))
     (let ((id (t--webview-id t--webview)))
-      (m-close id)))
+      (m-wv/close id)))
   (setq t--buffer-registry
         (delq (current-buffer) t--buffer-registry)))
 
@@ -217,15 +254,17 @@ request fails or times out."
   (add-to-list 't--buffer-registry (current-buffer))
   (add-hook 'kill-buffer-hook 't--on-kill-buffer nil t))
 
-(defun t-open-url (url)
+(defun t-open-url (url &optional env-name)
   (interactive "sUrl: ")
   (t--start-webview2-manager)
+  (let* ((use-env (or env-name t-default-env)))
+    (t--ensure-env use-env))
   (when (string-empty-p url)
     (setq url "https://google.com"))
   (let ((buffer (generate-new-buffer "EWV2")))
     (switch-to-buffer buffer)
     (let* ((rect (t--get-window-rect))
-           (id (m-new rect url))
+           (id (m-wv/create rect url))
            (wobj (make-emacs-webview2--webview
                   :id id :frame (selected-frame)
                   :url url :buffer buffer)))
@@ -234,7 +273,7 @@ request fails or times out."
 
 (defun t-shutdown ()
   (interactive)
-  (when (t--alive-p) (m-exit)))
+  (when (t--alive-p) (m-app/exit)))
 
 ;; Local Variables:
 ;; read-symbol-shorthands: (("t-" . "emacs-webview2-")
