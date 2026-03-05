@@ -488,27 +488,26 @@ public:
         IncomingMessage msg;
         while (inbox_.try_pop(msg)) {
             // 1. Raw Handler Interception.
-            if (raw_handler_) {
-                if (raw_handler_(msg, *this)) {
-                    continue;
-                }
+            if (raw_handler_ && raw_handler_(msg, *this)) {
+                continue;
             }
             // 2. Dispatch based on message type.
-            if (std::holds_alternative<Request>(msg)) {
-                handle_request(std::get<Request>(msg));
-            } else if (std::holds_alternative<Response>(msg)) {
-                handle_response(std::get<Response>(msg));
-            } else if (std::holds_alternative<Error>(msg)) {
-                // Handle "Global Error" (id: null), usually a Protocol Error from peer.
-                // Log to stderr as it cannot be replied to.
-                const auto& err = std::get<Error>(msg);
-                err_ << "[JSON-RPC FATAL ERROR] "
-                    << "Code: " << err.code
-                    << ", Message: " << err.message << std::endl;
-                if (!err.data.is_null()) {
-                    err_ << "Data: " << err.data.dump() << std::endl;
+            std::visit([this](auto&& arg) {
+                using T = std::decay_t<decltype(arg)>;
+                if constexpr (std::is_same_v<T, Request>) {
+                    handle_request(arg);
+                } else if constexpr (std::is_same_v<T, Response>) {
+                    handle_response(arg);
+                } else if constexpr (std::is_same_v<T, Error>) {
+                    // Handle "Global Error", usually a Protocol Error from peer.
+                    // Log to stderr as it cannot be replied to.
+                    err_ << "[JSON-RPC FATAL ERROR] Code: " << arg.code
+                        << ", Message: " << arg.message << std::endl;
+                    if (!arg.data.is_null()) {
+                        err_ << "Data: " << arg.data.dump() << std::endl;
+                    }
                 }
-            }
+            }, msg);
         }
     }
 
