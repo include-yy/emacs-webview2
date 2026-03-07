@@ -11,6 +11,16 @@ int main() {
     g_app = std::make_unique<AppContext>([main_thread_id = GetCurrentThreadId()]() {
         PostThreadMessage(main_thread_id, WM_JSONRPC_MESSAGE, 0, 0);
         });
+    g_app->dummy_hwnd = CreateWindowEx(
+        0, L"Static", L"emacs-webview2-nursery", 0,
+        0, 0, 0, 0, NULL,
+        NULL, NULL, NULL
+    );
+    if (g_app->dummy_hwnd) {
+        ShowWindow(g_app->dummy_hwnd, SW_HIDE);
+    } else {
+
+    }
     webview_init();
     // Start the JSON-RPC server
     g_app->server.start();

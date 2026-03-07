@@ -150,6 +150,32 @@ HRESULT WebViewInstance::on_new_window(ICoreWebView2* sender, ICoreWebView2NewWi
     return S_OK;
 }
 
+void WebViewInstance::Create(WebViewInitParams params) {
+    auto env = params.env;
+    HWND hwnd = params.hwnd;
+    env->CreateCoreWebView2Controller(hwnd, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+        [p = std::move(params)](HRESULT result, ICoreWebView2Controller* controller) mutable -> HRESULT {
+            if (FAILED(result)) {
+                p.on_error(result);
+                return result;
+            }
+            auto instance = std::make_shared<WebViewInstance>();
+            instance->id = p.id;
+            instance->controller = controller;
+            instance->controller->get_CoreWebView2(&instance->webview);
+            instance->controller->put_Bounds(p.bounds);
+            instance->controller->put_IsVisible(p.visible);
+            instance->setup_all_events();
+
+            g_app->webviews[p.id] = instance;
+            if (!p.url.empty()) {
+                instance->webview->Navigate(p.url.c_str());
+            }
+            p.on_created(p.id);
+            return S_OK;
+        }).Get());
+}
+
 void WebViewInstance::close() {
     for (auto it = cleanup_tasks.rbegin(); it != cleanup_tasks.rend(); it++) {
         (*it)();
@@ -204,48 +230,37 @@ static void handle_env_create(jsonrpc::Context ctx, const jsonrpc::json& params)
 }
 
 static void handle_webview_create(jsonrpc::Context ctx, const jsonrpc::json& params) {
-    HWND hwnd = (HWND)params[0].get<int64_t>();
-    RECT bounds = {
-        params[1][0].get<LONG>(), params[1][1].get<LONG>(),
-        params[1][2].get<LONG>(), params[1][3].get<LONG>()
-    };
-    std::wstring url = u::utf8_to_wstring(params[2].is_null() ? "" : params[2].get<std::string>());
+    const jsonrpc::json& params2 = params.is_null() ? jsonrpc::json::object() : params;
+    int64_t hwnd_val = params2.value("hwnd", 0);
+    bool visible_val = params2.value("visible", false);
+    auto rect_json = params2.value("bounds", std::vector<long>{0, 0, 0, 0});
+    std::string url_value = params2.value("url", "");
+    std::string env_name = params2.value("environment", "default");
 
-    std::string env_name = "default";
-    if (params.size() > 3 && !params[3].is_null()) {
-        env_name = params[3].get<std::string>();
+    WebViewInitParams init_args;
+    init_args.id = u::next_webview_id();
+    init_args.hwnd = (hwnd_val == 0) ? g_app->dummy_hwnd : (HWND)hwnd_val;
+    init_args.visible = FALSE;
+    if (hwnd_val != 0 && visible_val) {
+        init_args.visible = TRUE;
     }
+    init_args.bounds = { 0, 0, 0, 0 };
+    if (hwnd_val != 0 && visible_val) {
+        auto b = params2["bounds"].get<std::vector<long>>();
+        init_args.bounds = { b[0], b[1], b[2], b[3] };
+    }
+    init_args.url = url_value.empty() ? L"" : u::utf8_to_wstring(url_value);
+
     auto it = g_app->envs.find(env_name);
     if (it == g_app->envs.end()) {
-        ctx.error(jsonrpc::spec::kInternalError, "Environment not found, Call env/create first");
+        ctx.error(jsonrpc::spec::kInternalError, std::format("WebView2 Environment not exist: {}", env_name));
         return;
     }
-    int64_t newId = u::next_webview_id();
-    it->second->CreateCoreWebView2Controller(hwnd, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-        [ctx, newId, bounds, url](HRESULT result, ICoreWebView2Controller* controller) mutable -> HRESULT {
-            if (FAILED(result) || !controller) {
-                ctx.error(jsonrpc::spec::kInternalError, "Failed to create controller");
-                return result;
-            }
-
-            auto instance = std::make_shared<WebViewInstance>();
-            instance->id = newId;
-            instance->controller = controller;
-            instance->controller->get_CoreWebView2(&instance->webview);
-            instance->controller->put_Bounds(bounds);
-            instance->controller->put_IsVisible(TRUE);
-
-            instance->setup_all_events();
-
-            g_app->webviews[newId] = instance;
-            if (!url.empty()) {
-                instance->webview->Navigate(url.c_str());
-            } else {
-                instance->webview->Navigate(L"https://google.com");
-            }
-            ctx.reply(newId);
-            return S_OK;
-        }).Get());
+    init_args.env = it->second;
+    init_args.on_created = [ctx](int64_t id) mutable { ctx.reply(id); };
+    init_args.on_error = [ctx](HRESULT result) mutable {ctx.error(jsonrpc::spec::kInternalError, "Failed to create controller", std::format("{}", result)); };
+ 
+    WebViewInstance::Create(std::move(init_args));
 }
 
 using WebViewHandler = std::function<jsonrpc::json(WebViewInstance* inst, const jsonrpc::json& params)>;
@@ -295,6 +310,9 @@ auto webview_init() -> void {
     auto& server = g_app->server;
     // Example method to add two numbers
     server.register_method("add", u::add);
+    server.register_method("echo", [](PA params) -> RT {
+        return params;
+        });
     // Exit method to stop the server and exit the message loop
     server.register_notification("app/exit", [](PA) {
         PostThreadMessage(GetCurrentThreadId(), WM_QUIT, 0, 0);

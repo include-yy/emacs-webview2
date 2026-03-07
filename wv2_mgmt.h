@@ -11,6 +11,18 @@
 
 using namespace Microsoft::WRL;
 
+struct WebViewInitParams {
+    int64_t id;
+    HWND hwnd;
+    bool visible;
+    RECT bounds;
+    std::wstring url;
+    ComPtr<ICoreWebView2Environment> env;
+
+    std::function<void(int64_t)> on_created;
+    std::function<void(HRESULT)> on_error;
+};
+
 struct WebViewInstance : public std::enable_shared_from_this<WebViewInstance> {
     // Unique ID for this instance, used for mapping and communication with Emacs
     int64_t id{ 0 };
@@ -50,10 +62,13 @@ struct WebViewInstance : public std::enable_shared_from_this<WebViewInstance> {
     HRESULT on_key_pressed(ICoreWebView2Controller* sender, ICoreWebView2AcceleratorKeyPressedEventArgs* args);
     HRESULT on_new_window(ICoreWebView2* sender, ICoreWebView2NewWindowRequestedEventArgs* args);
 
+    static void Create(WebViewInitParams params);
     ~WebViewInstance() { close(); };
 };
 
 struct AppContext {
+    // dummy hwnd for borned webview2
+    HWND dummy_hwnd = nullptr;
     // JSONRPC server
     jsonrpc::Conn server;
     // WebView2 environments

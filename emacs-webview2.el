@@ -64,9 +64,11 @@
 (cl-defstruct t--webview
   "WebView2 instance wrapper."
   (id -1 :documentation "WebView2 object's id.")
+  (buffer nil :documentation "buffer the object belongs to.")
   (frame nil :documentation "Frame object belongs to.")
-  (url nil :documentation "Link navigate to.")
-  (buffer nil :documentation "buffer the object belongs to."))
+  (last-bounds [0 0 0 0] :documentation "last bound")
+  (last-visible nil :documentation "last visible")
+  (env "default"))
 
 (defvar-local t--webview nil
   "Buffer-local Webview2 structure.")
@@ -147,6 +149,9 @@ request fails or times out."
 (defun t--get-window-rect (&optional window)
   "Get WINDOW bound rect."
   (cl-coerce (window-body-pixel-edges window) 'vector))
+
+(defun m-echo (arg)
+  (t--srpc 'echo arg))
 
 (defun m-app/exit ()
   (setq t--shutting-down t)
@@ -158,9 +163,13 @@ request fails or times out."
 (defun m-env/list-names ()
   (t--srpc 'env/list-names :jsonrpc-omit))
 
-(defun m-wv/create (rect &optional url env-name)
-  (let ((hwnd (t--get-frame-hwnd)))
-    (t--srpc 'wv/create `[,hwnd ,rect ,url ,env-name])))
+(defun m-wv/create (&optional hwnd visible rect url env-name)
+  (let ((params `(,@(when hwnd `(:hwnd ,hwnd))
+                  ,@(when visible `(:visible ,visible))
+                  ,@(when rect `(:bounds ,rect))
+                  ,@(when url `(:url ,url))
+                  ,@(when env-name `(:environment ,env-name)))))
+    (t--srpc 'wv/create params)))
 
 (defun m-wv/close (id)
   (t--srpc 'wv/close `[,id]))
@@ -193,21 +202,6 @@ request fails or times out."
 (defun m-wv/navigate (id url)
   (t--say 'wv/navigate `[,id ,url]))
 
-(defun t-set-focus-on-click ()
-  (when (eq this-command 'mouse-drag-region)
-    (when (t--alive-p)
-      ;; (m-app/set-focus))))
-      ;; Just let Emacs directly get the focus.
-      (select-frame-set-input-focus (selected-frame)))))
-
-(defun t--set-focus-buffer-by-id (id)
-  (when-let* ((target-buf (t--get-buffer-by-id id)))
-    (let ((target-win (get-buffer-window target-buf 'visible)))
-      (if target-win (select-window target-win)
-        (switch-to-buffer target-buf))
-      (let ((frame (window-frame (selected-window))))
-        (select-frame-set-input-focus frame)))))
-
 (defun n-input/event (params)
   (let* ((id (map-elt params :id))
          (key (map-elt params :key)))
@@ -226,6 +220,21 @@ request fails or times out."
 (defun n-wv/new-window-requested (params)
   (let* ((url (map-elt params :url)))
     (t-open-url url)))
+
+(defun t-set-focus-on-click ()
+  (when (eq this-command 'mouse-drag-region)
+    (when (t--alive-p)
+      ;; (m-app/set-focus))))
+      ;; Just let Emacs directly get the focus.
+      (select-frame-set-input-focus (selected-frame)))))
+
+(defun t--set-focus-buffer-by-id (id)
+  (when-let* ((target-buf (t--get-buffer-by-id id)))
+    (let ((target-win (get-buffer-window target-buf 'visible)))
+      (if target-win (select-window target-win)
+        (switch-to-buffer target-buf))
+      (let ((frame (window-frame (selected-window))))
+        (select-frame-set-input-focus frame)))))
 
 (defvar t--vkey-map
   '((?\[ . 219) (?\] . 221) (?\; . 186) (?= . 187)
@@ -291,24 +300,25 @@ request fails or times out."
 (defun t--set-intercept-keys (id keys)
   (let* ((ls (mapcar #'t--encode-key-to-uint keys)))
     (m-wv/set-intercept-keys id (vconcat ls))))
-
+
 (defun t-monitor-window-configuration-change ()
   (when (t--alive-p)
     (let ((processed-ids))
-      (dolist (wnd (window-list))
-        (with-selected-window wnd
-          (when-let* ((w t--webview)
-                      (id (t--webview-id w)))
-            (unless (memq id processed-ids)
-              (push id processed-ids)
-              (let* ((bounds (t--get-window-rect))
-                     (frame (window-frame wnd))
-                     (hwnd (t--get-frame-hwnd frame)))
-                (unless (eq (t--webview-frame w) frame)
-                  (m-wv/reparent id hwnd)
-                  (setf (t--webview-frame w) frame))
-                (m-wv/resize id bounds)
-                (m-wv/set-visible id t))))))
+      (dolist (frame (frame-list))
+        (unless (frame-parent frame)
+          (dolist (wnd (window-list frame))
+            (with-selected-window wnd
+              (when-let* ((w t--webview)
+                          (id (t--webview-id w)))
+                (unless (memq id processed-ids)
+                  (push id processed-ids)
+                  (let* ((bounds (t--get-window-rect))
+                         (hwnd (t--get-frame-hwnd frame)))
+                    (unless (eq (t--webview-frame w) frame)
+                      (m-wv/reparent id hwnd)
+                      (setf (t--webview-frame w) frame))
+                    (m-wv/resize id bounds)
+                    (m-wv/set-visible id t))))))))
       (maphash (lambda (id buf)
                  (unless (memq id processed-ids)
                    (when (buffer-live-p buf)
@@ -344,7 +354,13 @@ request fails or times out."
              (t--webview-p t--webview))
     (let ((id (t--webview-id t--webview)))
       (m-wv/focus id))))
+
+(defun t--allocate-webview (&optional env-name)
+  (let* ((env (or env-name t-default-env))
+         (id (m-wv/create nil nil nil nil env)))
+    (make-emacs-webview2--webview :id id :env env)))
 
+
 (defun t--register-hooks ()
   (add-hook 'pre-command-hook #'t-set-focus-on-click)
   (add-hook 'delete-frame-functions
@@ -426,7 +442,7 @@ request fails or times out."
     (let ((buffer (generate-new-buffer "EWV2")))
       (switch-to-buffer buffer)
       (let* ((rect (t--get-window-rect))
-             (id (m-wv/create rect url use-env))
+             (id (m-wv/create (t--get-frame-hwnd) t rect url use-env))
              (wobj (make-emacs-webview2--webview
                     :id id :frame (selected-frame)
                     :url url :buffer buffer)))
