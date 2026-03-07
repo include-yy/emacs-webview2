@@ -7,3 +7,4 @@
 #include <WebView2EnvironmentOptions.h>
 
 #include <format>
+#include <unordered_set>
