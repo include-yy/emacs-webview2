@@ -61,7 +61,10 @@
   :type '(repeat string)
   :group 'emacs-webview2)
 
-(cl-defstruct t--webview
+
+
+(cl-defstruct (t--webview (:constructor t--webview-make)
+                          (:copier nil))
   "WebView2 instance wrapper."
   (id -1 :documentation "WebView2 object's id.")
   (buffer nil :documentation "buffer the object belongs to.")
@@ -70,7 +73,7 @@
   (last-visible nil :documentation "last visible")
   (env "default"))
 
-(defvar-local t--webview nil
+(defvar-local t--wv nil
   "Buffer-local Webview2 structure.")
 
 (defconst t--dir
@@ -308,7 +311,7 @@ request fails or times out."
         (unless (frame-parent frame)
           (dolist (wnd (window-list frame))
             (with-selected-window wnd
-              (when-let* ((w t--webview)
+              (when-let* ((w t--wv)
                           (id (t--webview-id w)))
                 (unless (memq id processed-ids)
                   (push id processed-ids)
@@ -332,7 +335,7 @@ request fails or times out."
   (when (t--alive-p)
     (dolist (wnd (window-list frame))
       (with-current-buffer (window-buffer wnd)
-        (when-let* ((w t--webview)
+        (when-let* ((w t--wv)
                     (_ (eq (t--webview-frame w) frame))
                     (safe-frame (car (remove frame (frame-list))))
                     (hwnd (t--get-frame-hwnd safe-frame))
@@ -343,22 +346,22 @@ request fails or times out."
 
 (defun t-give-focus-on-window-selection-change (&optional _window)
   (when (and (t--alive-p)
-             (bound-and-true-p t--webview)
-             (t--webview-p t--webview))
-    (let* ((id (t--webview-id t--webview)))
+             (bound-and-true-p t--wv)
+             (t--webview-p t--wv))
+    (let* ((id (t--webview-id t--wv)))
       (m-wv/focus id))))
 
 (defun t-give-focus-on-window-buffer-change (_window)
   (when (and (t--alive-p)
-             (bound-and-true-p t--webview)
-             (t--webview-p t--webview))
-    (let ((id (t--webview-id t--webview)))
+             (bound-and-true-p t--wv)
+             (t--webview-p t--wv))
+    (let ((id (t--webview-id t--wv)))
       (m-wv/focus id))))
 
 (defun t--allocate-webview (&optional env-name)
   (let* ((env (or env-name t-default-env))
          (id (m-wv/create nil nil nil nil env)))
-    (make-emacs-webview2--webview :id id :env env)))
+    (t--webview-make :id id :env env)))
 
 
 (defun t--register-hooks ()
@@ -419,13 +422,13 @@ request fails or times out."
     (t--register-hooks)))
 
 (defun t--on-kill-buffer ()
-  (when (and (t--alive-p) (t--webview-p t--webview))
-    (let ((id (t--webview-id t--webview)))
+  (when (and (t--alive-p) (t--webview-p t--wv))
+    (let ((id (t--webview-id t--wv)))
       (t--remove-buffer-by-id id)
       (m-wv/close id))))
 
 (defun t--setup-buffer (obj)
-  (setq t--webview obj)
+  (setq t--wv obj)
   (t--register-buffer (t--webview-id obj) (current-buffer))
   (add-hook 'kill-buffer-hook 't--on-kill-buffer nil t))
 
@@ -443,9 +446,9 @@ request fails or times out."
       (switch-to-buffer buffer)
       (let* ((rect (t--get-window-rect))
              (id (m-wv/create (t--get-frame-hwnd) t rect url use-env))
-             (wobj (make-emacs-webview2--webview
+             (wobj (t--webview-make
                     :id id :frame (selected-frame)
-                    :url url :buffer buffer)))
+                    :buffer buffer)))
         (t--set-intercept-keys id t-default-intercept-keys)
         (with-current-buffer buffer
           (setq-local tab-line-tabs-function #'t--tab-line-tabs)
@@ -458,8 +461,8 @@ request fails or times out."
   (interactive "sNavigate to URL: ")
   (let ((buf (or buffer (current-buffer))))
     (with-current-buffer buf
-      (if (and t--webview (t--alive-p))
-          (m-wv/navigate (t--webview-id t--webview) url)
+      (if (and t--wv (t--alive-p))
+          (m-wv/navigate (t--webview-id t--wv) url)
         (user-error "Current buffer is not a valid WebView2 buffer")))))
 
 (defun t-shutdown ()
