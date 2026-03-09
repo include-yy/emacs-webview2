@@ -259,8 +259,70 @@ static void handle_webview_create(jsonrpc::Context ctx, const jsonrpc::json& par
     init_args.env = it->second;
     init_args.on_created = [ctx](int64_t id) mutable { ctx.reply(id); };
     init_args.on_error = [ctx](HRESULT result) mutable {ctx.error(jsonrpc::spec::kInternalError, "Failed to create controller", std::format("{}", result)); };
- 
+
     WebViewInstance::Create(std::move(init_args));
+}
+
+static void handle_sync_ui_batch(const jsonrpc::json& params) {
+    if (!params.is_array()) return;
+
+    auto parse_rect = [](const jsonrpc::json& j) -> RECT {
+        RECT rc = { 0, 0, 0, 0 };
+        if (j.is_array() && j.size() == 4) {
+            rc.left = j[0].get<long>();
+            rc.top = j[1].get<long>();
+            rc.right = j[2].get<long>();
+            rc.bottom = j[3].get<long>();
+        }
+        return rc;
+        };
+
+    for (const auto& item : params) {
+        if (!item.is_array() || item.size() < 4) continue;
+
+        int id = item[0].get<int>();
+        auto it = g_app->webviews.find(id);
+        if (it == g_app->webviews.end()) continue;
+
+        auto& controller = it->second->controller;
+        if (!controller) continue;
+
+        bool has_vis_change = !item[1].is_null();
+        bool has_rect_change = !item[2].is_null();
+        bool has_parent_change = !item[3].is_null();
+        int target_vis = has_vis_change ? item[1].get<int>() : -1;
+
+        if (target_vis == FALSE) {
+            controller->put_IsVisible(FALSE);
+            if (has_parent_change) {
+                uint64_t raw_hwnd = item[3].get<uint64_t>();
+                HWND target_hwnd = (HWND)raw_hwnd;
+                if (target_hwnd == 0) {
+                    target_hwnd = g_app->dummy_hwnd;
+                }
+                controller->put_ParentWindow(target_hwnd);
+                controller->NotifyParentWindowPositionChanged();
+            }
+            if (has_rect_change) {
+                controller->put_Bounds(parse_rect(item[2]));
+            }
+        } else {
+            if (has_parent_change) {
+                uint64_t raw_hwnd = item[3].get<uint64_t>();
+                HWND target_hwnd = (HWND)raw_hwnd;
+                if (target_hwnd == 0) target_hwnd = g_app->dummy_hwnd;
+                controller->put_ParentWindow(target_hwnd);
+                controller->NotifyParentWindowPositionChanged();
+
+            }
+            if (has_rect_change) {
+                controller->put_Bounds(parse_rect(item[2]));
+            }
+            if (target_vis == TRUE) {
+                controller->put_IsVisible(TRUE);
+            }
+        }
+    }
 }
 
 using WebViewHandler = std::function<jsonrpc::json(WebViewInstance* inst, const jsonrpc::json& params)>;
@@ -393,6 +455,7 @@ auto webview_init() -> void {
         std::wstring wurl = u::utf8_to_wstring(url);
         it->webview->Navigate(wurl.c_str());
         }));
+    server.register_notification("wv/sync-ui-batch", handle_sync_ui_batch);
     server.register_method("wv/paste", with_webview([](WI it, PA) {
         // it->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
         // it->webview->ExecuteScript(L"document.execCommand('paste')", nullptr);
