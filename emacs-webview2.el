@@ -475,7 +475,7 @@
          (target-buf (o-get-buffer id)))
     (when (and target-buf (buffer-live-p target-buf))
       (with-current-buffer target-buf
-        (let* ((new-name (format "W-%s" title)))
+        (let* ((new-name (format "@-%s" title)))
           (unless (string= (buffer-name) new-name)
             (rename-buffer new-name t)))))))
 
@@ -533,7 +533,10 @@
     (t--try-focus-wv (selected-window))))
 
 (defalias 't-on-window-state-change-d
-  (timeout-debounced-func #'t-on-window-state-change 0))
+  (let* ((timer nil))
+    (lambda ()
+      (when timer (cancel-timer timer))
+      (setq timer (run-with-idle-timer 0 nil #'t-on-window-state-change)))))
 
 (defun t--register-hooks ()
   (add-hook 'pre-command-hook #'t-set-focus-on-click)
@@ -555,6 +558,7 @@
   (setq-local tab-line-close-tab-function #'kill-buffer)
   (setq-local tab-line-tab-name-function
               #'tab-line-tab-name-truncated-buffer)
+  (setq-local tab-line-close-button-show t)
   (tab-line-mode 1))
 
 (defun t-open-url (url &optional env)
