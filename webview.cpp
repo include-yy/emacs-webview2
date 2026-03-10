@@ -456,6 +456,10 @@ auto webview_init() -> void {
         it->webview->Navigate(wurl.c_str());
         }));
     server.register_notification("wv/sync-ui-batch", handle_sync_ui_batch);
+    server.register_method("wv/ssync-ui-batch", [](PA params) -> RT {
+        handle_sync_ui_batch(params);
+        return true;
+        });
     server.register_method("wv/paste", with_webview([](WI it, PA) {
         // it->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
         // it->webview->ExecuteScript(L"document.execCommand('paste')", nullptr);

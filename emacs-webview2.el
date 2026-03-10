@@ -386,6 +386,7 @@
            (proc (make-process :name "WebView2-Manager"
                                :command `(,path)
                                :coding 'binary
+                               :noquery t
                                :connection-type 'pipe)))
       (setf (o-conn t--mgr)
             (make-instance
@@ -463,6 +464,9 @@
 (defun m-wv/sync-ui-batch (arg)
   (t--say 'wv/sync-ui-batch arg))
 
+(defun m-wv/ssync-ui-batch (arg)
+  (t--srpc 'wv/ssync-ui-batch arg))
+
 (defun n-input/event (params)
   (let* ((id (map-elt params :id))
          (key (map-elt params :key)))
@@ -499,9 +503,6 @@
         (prog1 t
           (m-wv/sync-ui-batch (vconcat diffs)))))))
 
-(defun t-after-frame-delete (_frame)
-  (o-sync-all-active-wv))
-
 (defun t-on-delete-frame (frame)
   (when (t--alive-p)
     (let* ((batch nil))
@@ -513,7 +514,7 @@
                    (setf (t--webview-last-visible wv) 0)))
                (o-wv-map t--mgr))
       (when batch
-        (m-wv/sync-ui-batch (vconcat batch))))))
+        (m-wv/ssync-ui-batch (vconcat batch))))))
 
 (defun t--try-focus-wv (window)
   (when (and (t--alive-p)
@@ -529,25 +530,23 @@
             (m-wv/focus id)))))))
 
 (defun t-on-window-state-change ()
-  (when (o-sync-all-active-wv)
-    (t--try-focus-wv (selected-window))))
+  (o-sync-all-active-wv)
+  (t--try-focus-wv (selected-window)))
 
-(defalias 't-on-window-state-change-d
+(defalias 't-on-window-state-change-d ; 't-on-window-state-change)
   (let* ((timer nil))
     (lambda ()
       (when timer (cancel-timer timer))
-      (setq timer (run-with-idle-timer 0 nil #'t-on-window-state-change)))))
+      (setq timer (run-with-idle-timer 0.015 nil #'t-on-window-state-change)))))
 
 (defun t--register-hooks ()
   (add-hook 'pre-command-hook #'t-set-focus-on-click)
   (add-hook 'delete-frame-functions #'t-on-delete-frame)
-  (add-hook 'after-delete-frame-functions #'t-after-frame-delete)
   (add-hook 'window-state-change-hook #'t-on-window-state-change-d))
 
 (defun t--unregister-hooks ()
   (remove-hook 'pre-command-hook #'t-set-focus-on-click)
   (remove-hook 'delete-frame-functions #'t-on-delete-frame)
-  (remove-hook 'after-delete-frame-functions #'t-after-frame-delete)
   (remove-hook 'window-state-change-hook #'t-on-window-state-change-d))
 
 (defun t--tab-line-tabs ()
